@@ -1,15 +1,20 @@
 /**
-*  Arduino Library for Texas Instruments ADS1119 - 16-Bit 4ch Analog-to-Digital Converter
+*  ESP32 Library for Texas Instruments ADS1119 - 16-Bit 4ch Analog-to-Digital Converter
 *  
 *  @author Oktawian Chojnacki <oktawian@elowro.com>
 *  https://www.elowro.com
+*
+*  @author Jakub Prikner <jakub.prikner@gmail.com>
+*  https://www.prikner.net
 *
 */
 
 /**
  * The MIT License
  *
- * Copyright 2020 Oktawian Chojnacki <oktawian@elowro.com>
+ * Copyright (c) 2020 Oktawian Chojnacki <oktawian@elowro.com>
+ * 
+ * Copyright (c) 2022 Jakub Prikner <jakub.prikner@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,36 +35,49 @@
  * THE SOFTWARE.
  */
 
-#ifndef ADS1119_h
-#define ADS11189_h
+// ====================================================================
 
-#include "Arduino.h"
-#include <Wire.h>
+#ifndef ADS1119_h
+#define ADS1119_h
+
+#include <inttypes.h>
+#include <esp_log.h>
+#include "esp_err.h"
+
+// I2C Manager driver
+#include <i2c_manager.h>
+
+// --------------------------------------------------------------------
+
+/** default I2C port **/
+#define I2C_DEFAULT_PORT (I2C_NUM_0)
 
 /** default I2C address **/
-#define ADS1119_DEFAULT_ADDRESS (0x40) // 1000000 (A0+A1=GND)
+#define ADS1119_DEFAULT_ADDRESS (0x42)
 
 #define ADS1119_RANGE ((uint16_t)32767) 
 #define ADS1119_INTERNAL_REFERENCE_VOLTAGE ((float)2.048) 
 
-#define ADS1119_MUX_P_AIN0_N_AIN1 (0B000) 
-#define ADS1119_MUX_P_AIN2_N_AIN3 (0B001) 
-#define ADS1119_MUX_P_AIN1_N_AIN2 (0B010) 
-#define ADS1119_MUX_P_AIN0_N_AGND (0B011) 
-#define ADS1119_MUX_P_AIN1_N_AGND (0B100) 
-#define ADS1119_MUX_P_AIN2_N_AGND (0B101) 
-#define ADS1119_MUX_P_AIN3_N_AGND (0B110) 
+#define ADS1119_MUX_P_AIN0_N_AIN1  (0B000) 
+#define ADS1119_MUX_P_AIN2_N_AIN3  (0B001) 
+#define ADS1119_MUX_P_AIN1_N_AIN2  (0B010) 
+#define ADS1119_MUX_P_AIN0_N_AGND  (0B011) 
+#define ADS1119_MUX_P_AIN1_N_AGND  (0B100) 
+#define ADS1119_MUX_P_AIN2_N_AGND  (0B101) 
+#define ADS1119_MUX_P_AIN3_N_AGND  (0B110) 
 #define ADS1119_MUX_SHORTED_H_AVDD (0B111) 
+
+// --------------------------------------------------------------------
 
 enum struct ADS1119MuxConfiguration: uint8_t {
 	positiveAIN0negativeAIN1 = ADS1119_MUX_P_AIN0_N_AIN1,
 	positiveAIN2negativeAIN3 = ADS1119_MUX_P_AIN2_N_AIN3, 
 	positiveAIN1negativeAIN2 = ADS1119_MUX_P_AIN1_N_AIN2,
 	positiveAIN0negativeAGND = ADS1119_MUX_P_AIN0_N_AGND, 
-	positiveAIN1negativeGND = ADS1119_MUX_P_AIN1_N_AGND, 
+	positiveAIN1negativeGND  = ADS1119_MUX_P_AIN1_N_AGND, 
 	positiveAIN2negativeAGND = ADS1119_MUX_P_AIN2_N_AGND, 
 	positiveAIN3negativeAGND = ADS1119_MUX_P_AIN3_N_AGND,
-	shortedToHalvedAVDD = ADS1119_MUX_SHORTED_H_AVDD 
+	shortedToHalvedAVDD 	 = ADS1119_MUX_SHORTED_H_AVDD 
 };
 
 enum struct ADS1119RegisterToRead: uint8_t {
@@ -67,10 +85,8 @@ enum struct ADS1119RegisterToRead: uint8_t {
 	status = 0B1
 };
 
-/**
-	ADS1119Configuration
-	@author Oktawian Chojnacki <oktawian@elowro.com>
-*/
+// ====================================================================
+
 struct ADS1119Configuration
 {
 	enum struct Gain: uint8_t {
@@ -114,36 +130,39 @@ struct ADS1119Configuration
 	float externalReferenceVoltage = 0;
 };
 
-/**
- * ADS1119 IC
- * @author Oktawian Chojnacki <oktawian@elowro.com>
- */
+// ====================================================================
+
 class ADS1119
 {
 public:
-	ADS1119(uint8_t address = ADS1119_DEFAULT_ADDRESS);
+	ADS1119 ( i2c_port_t port = I2C_DEFAULT_PORT, uint8_t address = ADS1119_DEFAULT_ADDRESS ) ;
 
+	// --------------------------------------------------------------------
 	/**
 	Begin using the library instance.
 	*/
-	void begin(TwoWire *theWire = &Wire);
+	void init () ;
 
+	// --------------------------------------------------------------------
 	/**
 	Will perform conversion and save it as internal offset.
 	Make sure the input being measure is at VREF!
 	*/
-	float performOffsetCalibration(ADS1119Configuration config);
+	float performOffsetCalibration ( ADS1119Configuration config ) ;
 
+	// --------------------------------------------------------------------
 	/**
 	This command will save the configuration and then attempt to read two bytes, then convert it to voltage.
 	*/
-	float readVoltage(ADS1119Configuration config);
+	float readVoltage ( ADS1119Configuration config ) ;
 
+	// --------------------------------------------------------------------
 	/**
 	This command will save the configuration and then attempt to read two bytes.
 	*/
-	uint16_t readTwoBytes(ADS1119Configuration config);
-	
+	uint16_t readTwoBytes ( ADS1119Configuration config ) ;
+
+	// --------------------------------------------------------------------
 	/**
 	The POWERDOWN command places the device into power-down mode. 
 	This command shuts down all internal analog components, but holds all register values. 
@@ -151,34 +170,38 @@ public:
 	before the ADS1119 enters power-down mode. As soon as a START/SYNC command is issued, all analog
 	components return to their previous states.
 	*/
-	bool powerDown();
+	bool powerDown () ;
 
+	// --------------------------------------------------------------------
 	/**
 	This command resets the device to the default states. No delay time is required after the RESET 
 	command is latched before starting to communicate with the device as long as the timing requirements 
 	(see the I2C Timing Requirements table) for the (repeated) START and STOP conditions are met.
 	*/
-	bool reset();
+	bool reset () ;
 
+	// --------------------------------------------------------------------
 	/**
 	This command reads the value of the selected register. 
 	*/
-	uint8_t readRegister(ADS1119RegisterToRead registerToRead);
+	uint8_t readRegister ( ADS1119RegisterToRead registerToRead ) ;
+
+	// --------------------------------------------------------------------
 
 private:
-	TwoWire *_i2c;
-	uint8_t _address;
-	float _offset = 0.0; 
+	i2c_port_t port ;
+	uint8_t    address ;
+	float 	   offset = 0.0 ; 
 
-	bool commandStart();
-	bool commandReadData();
-	bool write(uint8_t registerValue, uint8_t value);
-	bool writeByte(uint8_t value);
+	bool commandStart 	 		  () ;
+	bool commandReadData 		  () ;
+	bool write 	  				  ( uint8_t registerValue, uint8_t value ) ;
+	bool writeByte				  ( uint8_t value ) ;
 
-	float gainAsFloat(ADS1119Configuration config);
-	float referenceVoltageAsFloat(ADS1119Configuration config);
+	float gainAsFloat			  ( ADS1119Configuration config ) ;
+	float referenceVoltageAsFloat ( ADS1119Configuration config ) ;
 
-	uint16_t read();
+	uint16_t read () ;
 };
 
 #endif

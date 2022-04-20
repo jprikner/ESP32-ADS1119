@@ -1,15 +1,20 @@
 /**
-*  Arduino Library for Texas Instruments ADS1119 - 4ch 16-Bit Analog-to-Digital Converter
+*  ESP32 Library for Texas Instruments ADS1119 - 16-Bit 4ch Analog-to-Digital Converter
 *  
 *  @author Oktawian Chojnacki <oktawian@elowro.com>
 *  https://www.elowro.com
+*
+*  @author Jakub Prikner <jakub.prikner@gmail.com>
+*  https://www.prikner.net
 *
 */
 
 /**
  * The MIT License
  *
- * Copyright 2020 Oktawian Chojnacki <oktawian@elowro.com>
+ * Copyright (c) 2020 Oktawian Chojnacki <oktawian@elowro.com>
+ * 
+ * Copyright (c) 2022 Jakub Prikner <jakub.prikner@gmail.com>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,29 +35,36 @@
  * THE SOFTWARE.
  */
 
+// ====================================================================
+
 #include "ADS1119.h"
-#include "Arduino.h"
-#include <Wire.h>
 
-ADS1119::ADS1119(uint8_t address) 
+static const char *TAG = "ADS1119" ;
+
+// ====================================================================
+
+ADS1119::ADS1119 ( i2c_port_t port, uint8_t address ) : port (port), address (address)
 {
-    _address = address;
+    
 }
 
-void ADS1119::begin(TwoWire *theWire) 
+// --------------------------------------------------------------------
+
+void ADS1119::init ()
 {
-    _i2c = theWire;
-    _i2c->begin();
+    ESP_LOGI ( TAG, "Init --- I2C port: %d, address: 0x%x", port, address ) ;
 }
 
-float ADS1119::readVoltage(ADS1119Configuration config) 
+// --------------------------------------------------------------------
+
+float ADS1119::readVoltage ( ADS1119Configuration config )
 {
     uint16_t twoBytesRead = readTwoBytes(config);
     if (twoBytesRead > 0x7FFF) 
     {
         twoBytesRead = 0x0;
     }
-    uint16_t value = twoBytesRead - _offset;
+    uint16_t value = twoBytesRead - offset;
     float gain = gainAsFloat(config);
     float referenceVoltage = referenceVoltageAsFloat(config);  
     float voltage = referenceVoltage * (float(value) / ADS1119_RANGE) * gain;
@@ -60,46 +72,58 @@ float ADS1119::readVoltage(ADS1119Configuration config)
     return voltage;
 }
 
-float ADS1119::performOffsetCalibration(ADS1119Configuration config) 
+// --------------------------------------------------------------------
+
+float ADS1119::performOffsetCalibration ( ADS1119Configuration config )
 {
     config.mux = ADS1119MuxConfiguration::positiveAIN2negativeAGND;
 
     float totalOffset = 0;
     for (int i = 0; i <= 100; i++) {
         totalOffset += referenceVoltageAsFloat(config) - readVoltage(config);
-        delay(10);
+        vTaskDelay (10) ;
     }
     
-    _offset = totalOffset / 100.0;
+    offset = totalOffset / 100.0;
 
-    return _offset;
+    return offset;
 }
 
-float ADS1119::gainAsFloat(ADS1119Configuration config) 
+// --------------------------------------------------------------------
+
+float ADS1119::gainAsFloat ( ADS1119Configuration config )
 {
     return uint8_t(config.gain) == uint8_t(0B0) ? 1.0 : 4.0;
 }
 
-float ADS1119::referenceVoltageAsFloat(ADS1119Configuration config) 
+// --------------------------------------------------------------------
+
+float ADS1119::referenceVoltageAsFloat ( ADS1119Configuration config )
 {
     return bool(config.voltageReference) ? config.externalReferenceVoltage : ADS1119_INTERNAL_REFERENCE_VOLTAGE;
 }
 
-bool ADS1119::reset() 
+// --------------------------------------------------------------------
+
+bool ADS1119::reset ()
 {
     // 8.5.3.2 RESET (0000 011x) / Page 25
     // http://www.ti.com/lit/ds/sbas925a/sbas925a.pdf
     return writeByte(0B00000110); // 0x06
 }
 
-bool ADS1119::powerDown() 
+// --------------------------------------------------------------------
+
+bool ADS1119::powerDown ()
 {
     // 8.5.3.4 POWERDOWN (0000 001x) / Page 25
     // http://www.ti.com/lit/ds/sbas925a/sbas925a.pdf
     return writeByte(0B00000010); // 0x02
 }
 
-uint16_t ADS1119::readTwoBytes(ADS1119Configuration config) 
+// --------------------------------------------------------------------
+
+uint16_t ADS1119::readTwoBytes ( ADS1119Configuration config )
 {
     // 8.5.3.6 RREG (0010 0rxx) / Page 26
     // http://www.ti.com/lit/ds/sbas925a/sbas925a.pdf
@@ -124,70 +148,81 @@ uint16_t ADS1119::readTwoBytes(ADS1119Configuration config)
     commandStart();
 
     write(registerValue, value);
-    delay(conversionTime);
+    vTaskDelay (conversionTime) ;
     commandReadData();
 
     return read();
 }
 
-bool ADS1119::commandReadData()
+// --------------------------------------------------------------------
+
+bool ADS1119::commandReadData ()
 {
     // 8.5.3.5 RDATA (0001 xxxx) / Page 26
     // http://www.ti.com/lit/ds/sbas925a/sbas925a.pdf
     return writeByte(0B00010000); // 0x10
 }
 
-bool ADS1119::commandStart()
+// --------------------------------------------------------------------
+
+bool ADS1119::commandStart ()
 {
     // 8.5.3.3 START/SYNC (0000 100x) / Page 25
     // http://www.ti.com/lit/ds/sbas925a/sbas925a.pdf
     return writeByte(0B00001000); // 0x08
 }
 
-uint16_t ADS1119::read()
-{
-    _i2c->requestFrom(_address, (uint8_t)2);
+// --------------------------------------------------------------------
 
-    if (_i2c->available() < 2) {
-         reset();
-         return 0x0;
+uint16_t ADS1119::read ()
+{
+	uint8_t conv[2] = {0} ;
+
+    esp_err_t ret = i2c_manager_read ( port, address, I2C_NO_REG, conv, 2 ) ; // read conversion data
+    
+    if ( ret != ESP_OK )
+	{
+        ESP_LOGE ( TAG, "Error reading two bytes" ) ;
+        return -1 ;
     }
-
-    return ((_i2c->read() << 8) | _i2c->read());
+    
+    return ( conv[0] << 8 | conv[1] ) ;
 }
 
-bool ADS1119::write(uint8_t registerValue, uint8_t value)
+// --------------------------------------------------------------------
+
+bool ADS1119::write ( uint8_t registerValue, uint8_t value )
 {
-    _i2c->beginTransmission(_address);
-    _i2c->write(registerValue);
-    _i2c->write(value);
+	esp_err_t ret = i2c_manager_write ( port, address, registerValue, &value, 1 ) ;
 
-    return _i2c->endTransmission() == 0;
+    return ret == ESP_OK ;
 }
 
-bool ADS1119::writeByte(uint8_t value)
+// --------------------------------------------------------------------
+
+bool ADS1119::writeByte ( uint8_t value )
 {
-    _i2c->beginTransmission(_address);
-    _i2c->write(value);
+	esp_err_t ret = i2c_manager_write ( port, address, I2C_NO_REG, &value, 1 ) ;
 
-    return _i2c->endTransmission() == 0;
+    return ret == ESP_OK ;
 }
 
-uint8_t ADS1119::readRegister(ADS1119RegisterToRead registerToRead)
+// --------------------------------------------------------------------
+
+uint8_t ADS1119::readRegister ( ADS1119RegisterToRead registerToRead )
 {
     // 8.5.3.6 RREG (0010 0rxx) / Page 26
     // http://www.ti.com/lit/ds/sbas925a/sbas925a.pdf
-    uint8_t byteToWrite = 0B00100000 || (uint8_t(registerToRead) << 2);
-    _i2c->beginTransmission(_address);
-    _i2c->write(byteToWrite);
-    if (_i2c->endTransmission() != 0)
-    {
-        return 0;
+ 
+    uint8_t *data = 0x00 ;
+    uint8_t byteToWrite = 0B00100000 | ( uint8_t(registerToRead) << 2 ) ;
+ 
+    esp_err_t ret = i2c_manager_read ( port, address, byteToWrite, data, 1 ) ;
+    
+    if ( ret != ESP_OK )
+	{
+        ESP_LOGE ( TAG, "Error reading register %d", uint8_t(registerToRead) ) ;
+        return -1 ;
     }
-
-    delay(1);
-
-    _i2c->requestFrom(_address, (uint8_t)1);
-
-    return _i2c->read();
+    return *data ;
 }
